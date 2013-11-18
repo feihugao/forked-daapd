@@ -909,6 +909,9 @@ source_next(int force)
   switch (r_mode)
     {
       case REPEAT_SONG:
+	if (!cur_streaming)
+	  break;
+
 	if (cur_streaming->ctx)
 	  {
 	    ret = transcode_seek(cur_streaming->ctx, 0);
@@ -1145,6 +1148,8 @@ source_check(void)
   while (cur_playing && (cur_playing->end != 0) && (pos > cur_playing->end))
     {
       i++;
+
+      db_file_inc_playcount((int)cur_playing->id);
 
       /* Stop playback if:
        * - at end of playlist (NULL)
@@ -3672,19 +3677,20 @@ raop_device_cb(const char *name, const char *type, const char *domain, const cha
   p = keyval_get(txt, "pw");
   if (!p)
     {
-      DPRINTF(E_LOG, L_PLAYER, "AirTunes %s: no pw field in TXT record!\n", name);
+      DPRINTF(E_INFO, L_PLAYER, "AirTunes %s: no pw field in TXT record, assuming no password protection\n", name);
 
-      goto free_rd;
+      has_password = 0;
     }
-
-  if (*p == '\0')
+  else if (*p == '\0')
     {
       DPRINTF(E_LOG, L_PLAYER, "AirTunes %s: pw has no value\n", name);
 
       goto free_rd;
     }
-
-  has_password = (strcmp(p, "false") != 0);
+  else
+    {
+      has_password = (strcmp(p, "false") != 0);
+    }
 
   if (has_password)
     {
@@ -3703,7 +3709,7 @@ raop_device_cb(const char *name, const char *type, const char *domain, const cha
   p = keyval_get(txt, "am");
   if (!p)
     {
-      DPRINTF(E_LOG, L_PLAYER, "AirTunes %s: no am field in TXT record!\n", name);
+      DPRINTF(E_INFO, L_PLAYER, "AirTunes %s: no am field in TXT record, assuming old Airport Express\n", name);
 
       /* Old AirPort Express */
       devtype = RAOP_DEV_APEX_80211G;

@@ -137,7 +137,11 @@ artwork_rescale(AVFormatContext *src_ctx, int s, int out_w, int out_h, int forma
       return -1;
     }
 
+#if LIBAVCODEC_VERSION_MAJOR >= 54 || (LIBAVCODEC_VERSION_MAJOR == 53 && LIBAVCODEC_VERSION_MINOR >= 6)
+  ret = avcodec_open2(src, img_decoder, NULL);
+#else
   ret = avcodec_open(src, img_decoder);
+#endif
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_ART, "Could not open codec for decoding: %s\n", strerror(AVUNERROR(ret)));
@@ -210,7 +214,11 @@ artwork_rescale(AVFormatContext *src_ctx, int s, int out_w, int out_h, int forma
     }
 #endif
 
+#if LIBAVFORMAT_VERSION_MAJOR >= 54 || (LIBAVFORMAT_VERSION_MAJOR == 53 && LIBAVFORMAT_VERSION_MINOR >= 21)
+  dst_st = avformat_new_stream(dst_ctx, NULL);
+#else
   dst_st = av_new_stream(dst_ctx, 0);
+#endif
   if (!dst_st)
     {
       DPRINTF(E_LOG, L_ART, "Out of memory for new output stream\n");
@@ -221,10 +229,10 @@ artwork_rescale(AVFormatContext *src_ctx, int s, int out_w, int out_h, int forma
 
   dst = dst_st->codec;
 
-#if LIBAVCODEC_VERSION_MAJOR >= 53 || (LIBAVCODEC_VERSION_MAJOR == 52 && LIBAVCODEC_VERSION_MINOR >= 64)
-  avcodec_get_context_defaults2(dst, AVMEDIA_TYPE_VIDEO);
+#if LIBAVCODEC_VERSION_MAJOR >= 54 || (LIBAVCODEC_VERSION_MAJOR == 53 && LIBAVCODEC_VERSION_MINOR >= 35)
+  avcodec_get_context_defaults3(dst, NULL);
 #else
-  avcodec_get_context_defaults2(dst, CODEC_TYPE_VIDEO);
+  avcodec_get_context_defaults2(dst, AVMEDIA_TYPE_VIDEO);
 #endif
 
   if (dst_fmt->flags & AVFMT_GLOBALHEADER)
@@ -252,7 +260,7 @@ artwork_rescale(AVFormatContext *src_ctx, int s, int out_w, int out_h, int forma
       DPRINTF(E_LOG, L_ART, "Could not determine best pixel format\n");
 
       ret = -1;
-      goto out_free_dst;
+      goto out_free_dst_ctx;
     }
 
   DPRINTF(E_DBG, L_ART, "Selected pixel format: %d\n", dst->pix_fmt);
@@ -263,25 +271,29 @@ artwork_rescale(AVFormatContext *src_ctx, int s, int out_w, int out_h, int forma
   dst->width = out_w;
   dst->height = out_h;
 
-#if LIBAVFORMAT_VERSION_MAJOR <= 52 || (LIBAVFORMAT_VERSION_MAJOR == 53 && LIBAVCODEC_VERSION_MINOR <= 1)
+#if LIBAVFORMAT_VERSION_MAJOR <= 52 || (LIBAVFORMAT_VERSION_MAJOR == 53 && LIBAVFORMAT_VERSION_MINOR <= 1)
   ret = av_set_parameters(dst_ctx, NULL);
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_ART, "Invalid parameters for artwork output: %s\n", strerror(AVUNERROR(ret)));
 
       ret = -1;
-      goto out_free_dst;
+      goto out_free_dst_ctx;
     }
 #endif
 
   /* Open encoder */
+#if LIBAVCODEC_VERSION_MAJOR >= 54 || (LIBAVCODEC_VERSION_MAJOR == 53 && LIBAVCODEC_VERSION_MINOR >= 6)
+  ret = avcodec_open2(dst, img_encoder, NULL);
+#else
   ret = avcodec_open(dst, img_encoder);
+#endif
   if (ret < 0)
     {
       DPRINTF(E_LOG, L_ART, "Could not open codec for encoding: %s\n", strerror(AVUNERROR(ret)));
 
       ret = -1;
-      goto out_free_dst;
+      goto out_free_dst_ctx;
     }
 
   i_frame = avcodec_alloc_frame();
@@ -397,6 +409,24 @@ artwork_rescale(AVFormatContext *src_ctx, int s, int out_w, int out_h, int forma
       goto out_free_buf;
     }
 
+#if LIBAVCODEC_VERSION_MAJOR >= 54
+  av_init_packet(&pkt);
+  pkt.data = outbuf;
+  pkt.size = outbuf_len;
+  ret = avcodec_encode_video2(dst, &pkt, o_frame, &have_frame);
+  if (!ret && have_frame && dst->coded_frame) 
+    {
+      dst->coded_frame->pts       = pkt.pts;
+      dst->coded_frame->key_frame = !!(pkt.flags & AV_PKT_FLAG_KEY);
+    }
+  else if (ret < 0)
+    {
+      DPRINTF(E_LOG, L_ART, "Could not encode artwork\n");
+
+      ret = -1;
+      goto out_fclose_dst;
+    }
+#else
   ret = avcodec_encode_video(dst, outbuf, outbuf_len, o_frame);
   if (ret <= 0)
     {
@@ -410,8 +440,9 @@ artwork_rescale(AVFormatContext *src_ctx, int s, int out_w, int out_h, int forma
   pkt.stream_index = 0;
   pkt.data = outbuf;
   pkt.size = ret;
+#endif
 
-#if LIBAVFORMAT_VERSION_MAJOR >= 53 || (LIBAVFORMAT_VERSION_MAJOR == 53 && LIBAVCODEC_VERSION_MINOR >= 3)
+#if LIBAVFORMAT_VERSION_MAJOR >= 53 || (LIBAVFORMAT_VERSION_MAJOR == 53 && LIBAVFORMAT_VERSION_MINOR >= 3)
   ret = avformat_write_header(dst_ctx, NULL);
 #else
   ret = av_write_header(dst_ctx);
@@ -477,12 +508,8 @@ artwork_rescale(AVFormatContext *src_ctx, int s, int out_w, int out_h, int forma
     av_free(o_frame);
   avcodec_close(dst);
 
- out_free_dst:
-  av_free(dst_st);
-  av_free(dst);
-
  out_free_dst_ctx:
-  av_free(dst_ctx);
+  avformat_free_context(dst_ctx);
 
  out_close_src:
   avcodec_close(src);
@@ -506,7 +533,7 @@ artwork_get(char *filename, int max_w, int max_h, int format, struct evbuffer *e
 
   src_ctx = NULL;
 
-#if LIBAVFORMAT_VERSION_MAJOR >= 53 || (LIBAVFORMAT_VERSION_MAJOR == 53 && LIBAVCODEC_VERSION_MINOR >= 3)
+#if LIBAVFORMAT_VERSION_MAJOR >= 53 || (LIBAVFORMAT_VERSION_MAJOR == 53 && LIBAVFORMAT_VERSION_MINOR >= 3)
   ret = avformat_open_input(&src_ctx, filename, NULL, NULL);
 #else
   ret = av_open_input_file(&src_ctx, filename, NULL, 0, NULL);
@@ -518,12 +545,20 @@ artwork_get(char *filename, int max_w, int max_h, int format, struct evbuffer *e
       return -1;
     }
 
+#if LIBAVFORMAT_VERSION_MAJOR >= 53 || (LIBAVFORMAT_VERSION_MAJOR == 53 && LIBAVFORMAT_VERSION_MINOR >= 3)
+  ret = avformat_find_stream_info(src_ctx, NULL);
+#else
   ret = av_find_stream_info(src_ctx);
+#endif
   if (ret < 0)
     {
       DPRINTF(E_WARN, L_ART, "Cannot get stream info: %s\n", strerror(AVUNERROR(ret)));
 
+#if LIBAVFORMAT_VERSION_MAJOR >= 54 || (LIBAVFORMAT_VERSION_MAJOR == 53 && LIBAVFORMAT_VERSION_MINOR >= 21)
+      avformat_close_input(&src_ctx);
+#else
       av_close_input_file(src_ctx);
+#endif
       return -1;
     }
 
@@ -546,7 +581,11 @@ artwork_get(char *filename, int max_w, int max_h, int format, struct evbuffer *e
     {
       DPRINTF(E_LOG, L_ART, "Artwork file '%s' not a PNG or JPEG file\n", filename);
 
+#if LIBAVFORMAT_VERSION_MAJOR >= 54 || (LIBAVFORMAT_VERSION_MAJOR == 53 && LIBAVFORMAT_VERSION_MINOR >= 21)
+      avformat_close_input(&src_ctx);
+#else
       av_close_input_file(src_ctx);
+#endif
       return -1;
     }
 
@@ -603,7 +642,11 @@ artwork_get(char *filename, int max_w, int max_h, int format, struct evbuffer *e
   else
     ret = artwork_rescale(src_ctx, s, target_w, target_h, format, evbuf);
 
+#if LIBAVFORMAT_VERSION_MAJOR >= 54 || (LIBAVFORMAT_VERSION_MAJOR == 53 && LIBAVFORMAT_VERSION_MINOR >= 21)
+  avformat_close_input(&src_ctx);
+#else
   av_close_input_file(src_ctx);
+#endif
 
   if (ret < 0)
     {
