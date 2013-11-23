@@ -92,6 +92,11 @@ forked_daapd_SOURCES = main.c \
 	raop.c raop.h \
 	evrtsp/rtsp.c evrtp/evrtsp.h \
 	evrtsp/rtsp-internal.h evrtsp/log.h \
+	evhttp/bufferevent-internal.h evhttp/http.c evhttp/http-internal.h \
+	evhttp/mm-internal.h evhttp/util-internal.h evhttp/defer-internal.h \
+	evhttp/http_compat.h evhttp/http_struct.h evhttp/ratelim-internal.h \
+	evhttp/evthread-internal.h evhttp/http.h evhttp/log-internal.h \
+	evhttp/strlcpy-internal.h evhttp/ipv6-internal.h \
 	scan-wma.c \
 	$(FLACSRC) $(MUSEPACKSRC)
 

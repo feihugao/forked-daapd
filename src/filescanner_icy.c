@@ -43,8 +43,8 @@
 #endif
 
 #include <event2/event.h>
-#include "event2/http.h"
-#include "event2/http_compat.h"
+#include "evhttp/http.h"
+#include "evhttp/http_compat.h"
 
 #include <libavformat/avformat.h>
 
