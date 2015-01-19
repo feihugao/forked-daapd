@@ -154,7 +154,7 @@ struct media_file_info {
 #define mfi_offsetof(field) offsetof(struct media_file_info, field)
 
 enum pl_type {
-  PL_PLAIN,
+  PL_PLAIN = 0,
   PL_SMART,
   PL_MAX
 };
@@ -431,7 +431,7 @@ struct playlist_info *
 db_pl_fetch_bytitlepath(char *title, char *path);
 
 int
-db_pl_add(char *title, char *path, int *id);
+db_pl_add(struct playlist_info *pli, int *id);
 
 int
 db_pl_add_item_bypath(int plid, char *path);
@@ -443,7 +443,7 @@ void
 db_pl_clear_items(int id);
 
 int
-db_pl_update(char *title, char *path, int id);
+db_pl_update(struct playlist_info *pli);
 
 void
 db_pl_delete(int id);

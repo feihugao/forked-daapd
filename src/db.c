@@ -2916,17 +2916,17 @@ db_pl_fetch_bytitlepath(char *title, char *path)
 }
 
 int
-db_pl_add(char *title, char *path, int *id)
+db_pl_add(struct playlist_info *pli, int *id)
 {
-#define QDUP_TMPL "SELECT COUNT(*) FROM playlists p WHERE p.title = '%q' AND p.path = '%q';"
-#define QADD_TMPL "INSERT INTO playlists (title, type, query, db_timestamp, disabled, path, idx, special_id)" \
-                  " VALUES ('%q', 0, NULL, %" PRIi64 ", 0, '%q', 0, 0);"
+#define QDUP_TMPL "SELECT COUNT(*) FROM playlists p WHERE p.title = TRIM(%Q) AND p.path = '%q';"
+#define QADD_TMPL "INSERT INTO playlists (title, type, query, db_timestamp, disabled, path, idx, special_id, parent_id)" \
+                  " VALUES (TRIM(%Q), %d, NULL, %" PRIi64 ", %d, '%q', %d, %d, %d);"
   char *query;
   char *errmsg;
   int ret;
 
   /* Check duplicates */
-  query = sqlite3_mprintf(QDUP_TMPL, title, path);
+  query = sqlite3_mprintf(QDUP_TMPL, pli->title, STR(pli->path));
   if (!query)
     {
       DPRINTF(E_LOG, L_DB, "Out of memory for query string\n");
@@ -2939,12 +2939,15 @@ db_pl_add(char *title, char *path, int *id)
 
   if (ret > 0)
     {
-      DPRINTF(E_WARN, L_DB, "Duplicate playlist with title '%s' path '%s'\n", title, path);
+      DPRINTF(E_WARN, L_DB, "Duplicate playlist with title '%s' path '%s'\n", pli->title, pli->path);
       return -1;
     }
 
   /* Add */
-  query = sqlite3_mprintf(QADD_TMPL, title, (int64_t)time(NULL), path);
+  query = sqlite3_mprintf(QADD_TMPL,
+			  pli->title, pli->type, (int64_t)time(NULL), pli->disabled, STR(pli->path),
+			  pli->index, pli->special_id, pli->parent_id);
+
   if (!query)
     {
       DPRINTF(E_LOG, L_DB, "Out of memory for query string\n");
@@ -2972,7 +2975,7 @@ db_pl_add(char *title, char *path, int *id)
       return -1;
     }
 
-  DPRINTF(E_DBG, L_DB, "Added playlist %s (path %s) with id %d\n", title, path, *id);
+  DPRINTF(E_DBG, L_DB, "Added playlist %s (path %s) with id %d\n", pli->title, pli->path, *id);
 
   return 0;
 
@@ -3005,12 +3008,16 @@ db_pl_add_item_byid(int plid, int fileid)
 }
 
 int
-db_pl_update(char *title, char *path, int id)
+db_pl_update(struct playlist_info *pli)
 {
-#define Q_TMPL "UPDATE playlists SET title = '%q', db_timestamp = %" PRIi64 ", disabled = 0, path = '%q' WHERE id = %d;"
+#define Q_TMPL "UPDATE playlists SET title = TRIM(%Q), type = %d, db_timestamp = %" PRIi64 ", disabled = %d, path = '%q', " \
+               " idx = %d, special_id = %d, parent_id = %d " \
+               " WHERE id = %d;"
   char *query;
 
-  query = sqlite3_mprintf(Q_TMPL, title, (int64_t)time(NULL), path, id);
+  query = sqlite3_mprintf(Q_TMPL,
+			  pli->title, pli->type, (int64_t)time(NULL), pli->disabled, STR(pli->path),
+			  pli->index, pli->special_id, pli->parent_id, pli->id);
 
   return db_query_run(query, 1, 0);
 #undef Q_TMPL
