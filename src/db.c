@@ -151,6 +151,7 @@ static const struct col_type_map pli_cols_map[] =
     { pli_offsetof(path),         DB_TYPE_STRING },
     { pli_offsetof(index),        DB_TYPE_INT },
     { pli_offsetof(special_id),   DB_TYPE_INT },
+    { pli_offsetof(parent_id),    DB_TYPE_INT },
 
     /* items is computed on the fly */
   };
@@ -235,6 +236,7 @@ static const ssize_t dbpli_cols_map[] =
     dbpli_offsetof(path),
     dbpli_offsetof(index),
     dbpli_offsetof(special_id),
+    dbpli_offsetof(parent_id),
 
     /* items is computed on the fly */
   };
@@ -4288,7 +4290,8 @@ db_perthread_deinit(void)
   "   disabled       INTEGER DEFAULT 0,"		\
   "   path           VARCHAR(4096),"			\
   "   idx            INTEGER NOT NULL,"			\
-  "   special_id     INTEGER DEFAULT 0"			\
+  "   special_id     INTEGER DEFAULT 0,"		\
+  "   parent_id      INTEGER DEFAULT 0"			\
   ");"
 
 #define T_PLITEMS				\
@@ -4373,14 +4376,14 @@ db_perthread_deinit(void)
  */
 
 #define SCHEMA_VERSION_MAJOR 15
-#define SCHEMA_VERSION_MINOR 01
+#define SCHEMA_VERSION_MINOR 02
 // Q_SCVER should be deprecated/removed at v16
 #define Q_SCVER						\
   "INSERT INTO admin (key, value) VALUES ('schema_version', '15');"
 #define Q_SCVER_MAJOR					\
   "INSERT INTO admin (key, value) VALUES ('schema_version_major', '15');"
 #define Q_SCVER_MINOR					\
-  "INSERT INTO admin (key, value) VALUES ('schema_version_minor', '01');"
+  "INSERT INTO admin (key, value) VALUES ('schema_version_minor', '02');"
 
 struct db_init_query {
   char *query;
@@ -5428,6 +5431,26 @@ static const struct db_init_query db_upgrade_v1501_queries[] =
     { U_V1501_SCVER_MINOR,    "set schema_version_minor to 01" },
   };
 
+
+/* Upgrade from schema v15.01 to v15.02 */
+/* Expand data model to allow for nested playlists */
+
+#define U_V1502_PL_PARENTID_ADD			\
+  "ALTER TABLE playlists ADD COLUMN parent_id INTEGER DEFAULT 0;"
+
+#define U_V1502_SCVER_MAJOR			\
+  "UPDATE admin SET value = '15' WHERE key = 'schema_version_major';"
+#define U_V1502_SCVER_MINOR			\
+  "UPDATE admin SET value = '02' WHERE key = 'schema_version_minor';"
+
+static const struct db_init_query db_upgrade_v1502_queries[] =
+  {
+    { U_V1502_PL_PARENTID_ADD,"expanding table playlists with parent_id column" },
+
+    { U_V1502_SCVER_MAJOR,    "set schema_version_major to 15" },
+    { U_V1502_SCVER_MINOR,    "set schema_version_minor to 02" },
+  };
+
 static int
 db_check_version(void)
 {
@@ -5539,6 +5562,13 @@ db_check_version(void)
 
 	  case 1500:
 	    ret = db_generic_upgrade(db_upgrade_v1501_queries, sizeof(db_upgrade_v1501_queries) / sizeof(db_upgrade_v1501_queries[0]));
+	    if (ret < 0)
+	      return -1;
+
+	    /* FALLTHROUGH */
+
+	  case 1501:
+	    ret = db_generic_upgrade(db_upgrade_v1502_queries, sizeof(db_upgrade_v1502_queries) / sizeof(db_upgrade_v1502_queries[0]));
 	    if (ret < 0)
 	      return -1;
 
