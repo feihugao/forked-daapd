@@ -140,6 +140,8 @@ static void *g_libhandle;
 static enum spotify_state g_state;
 /* (not used) Tells which commmand is currently being processed */
 static struct spotify_command *g_cmd;
+// The global base playlist id (parent of all Spotify playlists in the db)
+static int g_base_plid;
 
 // Audio fifo
 static audio_fifo_t *g_audio_fifo;
@@ -558,7 +560,6 @@ spotify_playlist_save(sp_playlist *pl)
   sp_link *link;
   char url[1024];
   const char *name;
-  char title[512];
   int plid;
   int num_tracks;
   int ret;
@@ -590,7 +591,6 @@ spotify_playlist_save(sp_playlist *pl)
   fptr_sp_link_release(link);
 
   pli = db_pl_fetch_bypath(url);
-  snprintf(title, sizeof(title), "[s] %s", name);
 
   if (pli)
     {
@@ -599,7 +599,7 @@ spotify_playlist_save(sp_playlist *pl)
       plid = pli->id;
 
       free(pli->title);
-      pli->title = strdup(title);
+      pli->title = strdup(name);
 
       ret = db_pl_update(pli);
       if (ret < 0)
@@ -625,8 +625,10 @@ spotify_playlist_save(sp_playlist *pl)
 	}
 
       memset(pli, 0, sizeof(struct playlist_info));
-      pli->title = strdup(title);
+
+      pli->title = strdup(name);
       pli->path = strdup(url);
+      pli->parent_id = g_base_plid;
 
       ret = db_pl_add(pli, &plid);
       if ((ret < 0) || (plid < 1))
@@ -1180,6 +1182,8 @@ logged_in(sp_session *sess, sp_error error)
 {
   sp_playlist *pl;
   sp_playlistcontainer *pc;
+  struct playlist_info pli;
+  int ret;
   int i;
 
   if (SP_ERROR_OK != error)
@@ -1191,6 +1195,17 @@ logged_in(sp_session *sess, sp_error error)
   DPRINTF(E_LOG, L_SPOTIFY, "Login to Spotify succeeded. Reloading playlists.\n");
 
   db_spotify_purge();
+
+  memset(&pli, 0, sizeof(struct playlist_info));
+  pli.title = "Spotify";
+  pli.path = "spotify:base_playlist";
+
+  ret = db_pl_add(&pli, &g_base_plid);
+  if (ret < 0)
+    {
+      DPRINTF(E_LOG, L_SPOTIFY, "Error adding base playlist\n");
+      return;
+    }
 
   pc = fptr_sp_session_playlistcontainer(sess);
 
