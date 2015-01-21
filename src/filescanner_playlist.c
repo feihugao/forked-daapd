@@ -40,8 +40,30 @@
 #include "misc.h"
 
 /* Formats we can read so far */
-#define PLAYLIST_PLS 1
-#define PLAYLIST_M3U 2
+enum playlist_format
+{
+  PLAYLIST_UNKNOWN = 0,
+  PLAYLIST_PLS,
+  PLAYLIST_M3U,
+};
+
+static enum playlist_format
+pl_format_get(char *file)
+{
+  char *ptr;
+
+  ptr = strrchr(file, '.');
+  if (!ptr)
+    return PLAYLIST_UNKNOWN;
+
+  if (strcasecmp(ptr, ".m3u") == 0)
+    return PLAYLIST_M3U;
+
+  if (strcasecmp(ptr, ".pls") == 0)
+    return PLAYLIST_PLS;
+
+  return PLAYLIST_UNKNOWN;
+}
 
 /* Get metadata from the EXTINF tag */
 static int
@@ -74,12 +96,13 @@ extinf_get(char *string, struct media_file_info *mfi, int *extinf)
 }
 
 void
-scan_playlist(char *file, time_t mtime)
+scan_playlist(char *file, time_t mtime, int pl_parent)
 {
   FILE *fp;
   struct media_file_info mfi;
   struct playlist_info *pli;
   struct stat sb;
+  enum playlist_format pl_format;
   char buf[PATH_MAX];
   char *path;
   char *entry;
@@ -88,29 +111,19 @@ scan_playlist(char *file, time_t mtime)
   size_t len;
   int extinf;
   int pl_id;
-  int pl_format;
   int mfi_id;
   int ret;
   int i;
 
-  DPRINTF(E_LOG, L_SCAN, "Processing static playlist: %s\n", file);
+  DPRINTF(E_LOG, L_SCAN, "Processing static playlist: '%s'\n", file);
 
-  ptr = strrchr(file, '.');
-  if (!ptr)
-    return;
+  pl_format = pl_format_get(file);
+  if (pl_format == PLAYLIST_UNKNOWN)
+    {
+      DPRINTF(E_LOG, L_SCAN, "BUG: Unknown playlist format\n");
 
-  if (strcasecmp(ptr, ".m3u") == 0)
-    pl_format = PLAYLIST_M3U;
-  else if (strcasecmp(ptr, ".pls") == 0)
-    pl_format = PLAYLIST_PLS;
-  else
-    return;
-
-  filename = strrchr(file, '/');
-  if (!filename)
-    filename = file;
-  else
-    filename++;
+      return;
+    }
 
   ret = stat(file, &sb);
   if (ret < 0)
@@ -120,24 +133,36 @@ scan_playlist(char *file, time_t mtime)
       return;
     }
 
-  fp = fopen(file, "r");
-  if (!fp)
-    {
-      DPRINTF(E_LOG, L_SCAN, "Could not open playlist '%s': %s\n", file, strerror(errno));
+  filename = strrchr(file, '/');
+  if (!filename)
+    filename = file;
+  else
+    filename++;
 
-      return;
-    }
-
-  /* Fetch or create playlist */
+  /* Fetch or create playlist, clear all items */
   pli = db_pl_fetch_bypath(file);
   if (pli)
     {
       DPRINTF(E_DBG, L_SCAN, "Found playlist '%s', updating\n", file);
 
-      pl_id = pli->id;
+      /* We may have scanned the playlist before, but are now doing a second
+       * pass (recursion), because the playlist is nested in another playlist,
+       * in which case we just register the parent playlist.
+       */
+      if (pl_parent)
+	{
+	  DPRINTF(E_DBG, L_SCAN, "Registering playlist id %d as parent for '%s'\n", pl_parent, file);
 
-      db_pl_ping(pl_id);
-      db_pl_clear_items(pl_id);
+          pli->parent_id = pl_parent;
+	  db_pl_update(pli);
+	  free_pli(pli, 0);
+	  return;
+	}
+
+      db_pl_ping(pli->id);
+      db_pl_clear_items(pli->id);
+
+      pl_id = pli->id;
     }
   else
     {
@@ -163,6 +188,7 @@ scan_playlist(char *file, time_t mtime)
 	*ptr = '.';
 
       pli->path = strdup(file);
+      pli->parent_id = pl_parent;
 
       ret = db_pl_add(pli, &pl_id);
       if (ret < 0)
@@ -177,6 +203,15 @@ scan_playlist(char *file, time_t mtime)
     }
 
   free_pli(pli, 0);
+
+  /* Begin reading the contents of the playlist file (items) */
+  fp = fopen(file, "r");
+  if (!fp)
+    {
+      DPRINTF(E_LOG, L_SCAN, "Could not open playlist '%s': %s\n", file, strerror(errno));
+
+      return;
+    }
 
   extinf = 0;
   memset(&mfi, 0, sizeof(struct media_file_info));
@@ -230,7 +265,7 @@ scan_playlist(char *file, time_t mtime)
 
 	  filescanner_process_media(filename, mtime, 0, F_SCAN_TYPE_URL, &mfi);
 	}
-      /* Regular file, should already be in library */
+      /* Either a regular file (should already be in library) or a nested playlist */
       else
 	{
 	  /* Playlist might be from Windows so we change backslash to forward slash */
@@ -238,6 +273,13 @@ scan_playlist(char *file, time_t mtime)
 	    {
 	      if (path[i] == '\\')
 	        path[i] = '/';
+	    }
+
+	  /* Is it a playlist in a playlist? - then we go recursive! */
+	  if (pl_format_get(path) != PLAYLIST_UNKNOWN)
+	    {
+	      scan_playlist(path, mtime, pl_id);
+	      continue;
 	    }
 
           /* Now search for the library item where the path has closest match to playlist item */

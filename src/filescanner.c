@@ -695,7 +695,7 @@ process_playlist(char *file, time_t mtime)
 
   ft = file_type_get(file);
   if (ft == FILE_PLAYLIST)
-    scan_playlist(file, mtime);
+    scan_playlist(file, mtime, 0);
 #ifdef ITUNES
   else if (ft == FILE_ITUNES)
     scan_itunes_itml(file);
